@@ -22,13 +22,11 @@ func (c *Compiler) Preprocessing(filename string) (string, error) {
         return "", err
     }
 
-    noComments, err := utils.RemoveComments(content)
+    noComments, err := utils.RemoveCommentsAndSpaces(content)
 
     if err != nil {
         return "", err
     }
 
-    cleanedContent := utils.TrimLines(noComments)
-
-    return cleanedContent, nil
+    return noComments, nil
 }
