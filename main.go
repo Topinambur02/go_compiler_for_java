@@ -4,16 +4,24 @@ import (
 	"fmt"
 
 	"github.com/topinambur02/compiler/compiler"
+	"github.com/topinambur02/compiler/utils"
 )
 
 func main() {
 	filename := "test.java"
 	comp := compiler.Compiler{}
-	result, err := comp.Preprocessing(filename)
+	cleanCode, err := comp.Preprocessing(filename)
 
 	if err != nil {
 		panic(err)
 	}
 
+	tokens, err := comp.LexicalAnalysis(cleanCode)
+
+	if err != nil {
+		panic(err)
+	}
+
+	result := utils.FormatOutput(tokens)
 	fmt.Println(result)
 }
