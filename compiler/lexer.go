@@ -17,7 +17,7 @@ var operators = map[string]bool{
 }
 
 var delimiters = map[string]bool{
-	".": true, ";": true, "{": true, "}": true, "(": true, ")": true, "[": true, "]": true, ",": true, " ": true,
+	".": true, ";": true, "{": true, "}": true, "(": true, ")": true, "[": true, "]": true, ",": true,
 }
 
 func (c *Compiler) LexicalAnalysis(code string) ([]model.Token, error) {
@@ -92,8 +92,8 @@ func (c *Compiler) LexicalAnalysis(code string) ([]model.Token, error) {
 				return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: буквы в цифровых константах (или идентификатор начинается с цифры) '%s'", line, startCol, val)
 			}
 
-			if dotCount > 1 {
-				return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: некорректно оформленное число (множественные точки) '%s'", line, startCol, val)
+			if dotCount >= 1 {
+				return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: некорректно оформленное число '%s'", line, startCol, val)
 			}
 
 			table = append(table, model.Token{Type: constants.CONSTANT_INT, Value: val})
