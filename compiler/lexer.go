@@ -16,122 +16,120 @@ var operators = map[string]bool{
 	"=": true, "<": true, ">": true, "-": true, "+": true, "++": true,
 }
 
-var delimiters = map[byte]bool{
-	'.': true, ';': true, '{': true, '}': true, '(': true, ')': true, '[': true, ']': true, ',': true,
+var delimiters = map[string]bool{
+	".": true, ";": true, "{": true, "}": true, "(": true, ")": true, "[": true, "]": true, ",": true, " ": true,
 }
 
 func (c *Compiler) LexicalAnalysis(code string) ([]model.Token, error) {
-	var tokens []model.Token
-	length := len(code)
-	i := 0
+	var table []model.Token
+	line := 1
+	col := 1
 
-	for i < length {
-		char := code[i]
+	for i := 0; i < len(code); {
+		ch := rune(code[i])
 
-		if unicode.IsSpace(rune(char)) {
+		if ch == ' ' || ch == '\t' || ch == '\r' {
 			i++
+			col++
 			continue
 		}
 
-		if unicode.IsLetter(rune(char)) || char == '_' {
-			start := i
+		if ch == '\n' {
+			i++
+			line++
+			col = 1
+			continue
+		}
 
-			for i < length && (unicode.IsLetter(rune(code[i])) || unicode.IsDigit(rune(code[i])) || code[i] == '_') {
+		if unicode.IsLetter(ch) || ch == '_' {
+			word := ""
+
+			for i < len(code) && (unicode.IsLetter(rune(code[i])) || unicode.IsDigit(rune(code[i])) || code[i] == '_') {
+				word += string(code[i])
 				i++
+				col++
 			}
 
-			val := code[start:i]
-
-			if keywords[val] {
-				tokens = append(tokens, model.Token{Type: constants.KEYWORD, Value: val})
+			if keywords[word] {
+				table = append(table, model.Token{Type: constants.KEYWORD, Value: word})
 			} else {
-				tokens = append(tokens, model.Token{Type: constants.IDENTIFIER, Value: val})
+				table = append(table, model.Token{Type: constants.IDENTIFIER, Value: word})
 			}
 
 			continue
 		}
 
-		if unicode.IsDigit(rune(char)) {
-			start := i
+		if unicode.IsDigit(ch) {
+			startCol := col
+			val := ""
 			dotCount := 0
 			hasLetter := false
 
-			for i < length && !unicode.IsSpace(rune(code[i])) && !delimiters[code[i]] && !operators[string(code[i])] {
-				if code[i] == '.' {
+			for i < len(code) {
+				curr := rune(code[i])
+
+				if unicode.IsDigit(curr) {
+					val += string(curr)
+					i++
+					col++
+				} else if curr == '.' {
 					dotCount++
-				} else if unicode.IsLetter(rune(code[i])) {
+					val += string(curr)
+					i++
+					col++
+				} else if unicode.IsLetter(curr) {
 					hasLetter = true
+					val += string(curr)
+					i++
+					col++
+				} else {
+					break
 				}
 
-				i++
 			}
-
-			val := code[start:i]
 
 			if hasLetter {
-				return nil, fmt.Errorf("Лексическая ошибка: буква в цифровой константе '%s'", val)
+				return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: буквы в цифровых константах (или идентификатор начинается с цифры) '%s'", line, startCol, val)
 			}
 
-			if dotCount == 1 {
-				tokens = append(tokens, model.Token{Type: constants.CONSTANT_REAL, Value: val})
-			} else if dotCount > 1 {
-				return nil, fmt.Errorf("Лексическая ошибка: некорректно оформленное число (множественные точки) '%s'", val)
-			} else {
-				tokens = append(tokens, model.Token{Type: constants.CONSTANT_INT, Value: val})
+			if dotCount > 1 {
+				return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: некорректно оформленное число (множественные точки) '%s'", line, startCol, val)
 			}
+
+			table = append(table, model.Token{Type: constants.CONSTANT_INT, Value: val})
 
 			continue
 		}
 
-		if char == '"' {
-			start := i
+		if i+1 < len(code) {
+			twoChars := code[i : i+2]
+
+			if operators[twoChars] {
+				table = append(table, model.Token{Type: constants.OPERATOR, Value: twoChars})
+				i += 2
+				col += 2
+				continue
+			}
+		}
+
+		charStr := string(ch)
+
+		if operators[charStr] {
+			table = append(table, model.Token{Type: constants.OPERATOR, Value: charStr})
 			i++
-			closed := false
-
-			for i < length {
-				if code[i] == '"' {
-					closed = true
-					i++
-					break
-				}
-
-				if code[i] == '\n' {
-					break
-				}
-
-				i++
-			}
-			val := code[start:i]
-
-			if !closed {
-				return nil, fmt.Errorf("Лексическая ошибка: незакрытый строковый литерал '%s'", val)
-			}
-
-			tokens = append(tokens, model.Token{Type: constants.CONSTANT_STR, Value: val})
-
+			col++
 			continue
 		}
 
-		if i+1 < length && operators[code[i:i+2]] {
-			tokens = append(tokens, model.Token{Type: constants.OPERATOR, Value: code[i : i+2]})
-			i += 2
-			continue
-		}
-
-		if operators[string(char)] {
-			tokens = append(tokens, model.Token{Type: constants.OPERATOR, Value: string(char)})
+		if delimiters[charStr] {
+			table = append(table, model.Token{Type: constants.DELIMITER, Value: charStr})
 			i++
+			col++
 			continue
 		}
 
-		if delimiters[char] {
-			tokens = append(tokens, model.Token{Type: constants.DELIMITER, Value: string(char)})
-			i++
-			continue
-		}
-
-		return nil, fmt.Errorf("Лексическая ошибка: недопустимый символ '%c'", char)
+		return nil, fmt.Errorf("Лексическая ошибка [Строка %d, Колонка %d]: неизвестный оператор или символ '%s'", line, col, charStr)
 	}
 
-	return tokens, nil
+	return table, nil
 }
