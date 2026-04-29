@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/topinambur02/compiler/compiler"
 	"github.com/topinambur02/compiler/utils"
@@ -22,6 +23,12 @@ func main() {
 		panic(err)
 	}
 
-	result := utils.FormatOutput(tokens)
-	fmt.Println(result)
+	ast := comp.SyntacticAnalyzer(tokens)
+
+	if ast != nil {
+		fmt.Println("=== Начинается синтаксический анализ ===")
+		utils.PrintAST(*ast)
+	} else {
+		os.Exit(1)
+	}
 }
