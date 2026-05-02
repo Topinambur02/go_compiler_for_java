@@ -235,6 +235,12 @@ func (p *Parser) parseStatement() model.Statement {
 		p.expectValue(";")
 		return model.AssignStmt{Left: expr, Right: right}
 	}
+
+	switch expr.(type) {
+	case model.Ident:
+		p.reportError("Недопустимое выражение", "присваивание или вызов метода", fmt.Sprintf("%v", expr))
+	}
+
 	p.expectValue(";")
 	return expr
 }
