@@ -321,9 +321,38 @@ func (p *Parser) parsePrimary() model.Expr {
 			node = model.ArrayAccess{Array: node, Index: index}
 		} else if next.Value == "(" {
 			p.consume()
-			p.skipUntil(")")
+
+			var args []model.Expr
+
+			if p.peek().Value != ")" {
+				for {
+					arg := p.parseExpression()
+					args = append(args, arg)
+
+					if p.peek().Value == "," {
+						p.consume()
+					} else {
+						break
+					}
+				}
+			}
+
 			p.expectValue(")")
-			node = model.CallExpr{Name: fmt.Sprintf("%v", node)}
+
+			funcName := ""
+			switch v := node.(type) {
+			case model.Ident:
+				funcName = v.Name
+			case model.SelectorExpr:
+				funcName = v.Sel
+			default:
+				funcName = fmt.Sprintf("%v", node)
+			}
+
+			node = model.CallExpr{
+				Name: funcName,
+				Args: args,
+			}
 		} else if next.Value == "++" || next.Value == "--" {
 			op := p.consume().Value
 			node = model.PostfixExpr{X: node, Op: op}

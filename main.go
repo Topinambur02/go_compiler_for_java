@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/topinambur02/compiler/compiler"
+	"github.com/topinambur02/compiler/utils"
 )
 
 func main() {
@@ -20,5 +21,6 @@ func main() {
 	}
 
 	ast := comp.SyntacticAnalyzer(tokens)
+	utils.PrintAST(*ast)
 	comp.SemanticAnalysis(ast)
 }

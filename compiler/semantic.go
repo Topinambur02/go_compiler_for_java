@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/topinambur02/compiler/model"
 )
@@ -12,6 +13,7 @@ type Symbol struct {
 	Type        string
 	Declared    bool
 	Initialized bool
+	ParamCount  int
 }
 
 type Triad struct {
@@ -37,7 +39,18 @@ func (c *Compiler) SemanticAnalysis(ast *model.Program) {
 
 	for _, class := range ast.Classes {
 		for _, method := range class.Methods {
-			a.addSymbol(method.Name, "function", true)
+			if _, exists := a.symbolIndex[method.Name]; exists {
+				a.errors = append(a.errors, fmt.Sprintf("Повторное объявление функции: %s", method.Name))
+			} else {
+				a.symbolIndex[method.Name] = len(a.symbols)
+				a.symbols = append(a.symbols, Symbol{
+					Name:        method.Name,
+					Type:        "function",
+					Declared:    true,
+					Initialized: true,
+					ParamCount:  len(method.Params),
+				})
+			}
 			for _, p := range method.Params {
 				a.addSymbol(p.Name, p.Type, true)
 			}
@@ -110,6 +123,7 @@ func (a *Analyzer) analyzeStatement(stmt model.Statement) {
 		a.triads = append(a.triads, Triad{Op: "return", Arg1: valRef})
 
 	case model.CallExpr:
+		a.checkFunctionCall(s.Name, len(s.Args))
 		for _, arg := range s.Args {
 			a.analyzeExpr(arg)
 		}
@@ -185,6 +199,7 @@ func (a *Analyzer) analyzeExpr(expr model.Expr) string {
 		return fmt.Sprintf("^%d", len(a.triads))
 
 	case model.CallExpr:
+		a.checkFunctionCall(e.Name, len(e.Args))
 		funcRef := a.analyzeExpr(e.Name)
 		for _, arg := range e.Args {
 			a.analyzeExpr(arg)
@@ -232,6 +247,30 @@ func (a *Analyzer) printResults() {
 
 		for i, t := range a.triads {
 			fmt.Printf("%d) (%s, %s, %s)\n", i+1, t.Op, t.Arg1, t.Arg2)
+		}
+	}
+}
+
+func (a *Analyzer) checkFunctionCall(nameExpr model.Expr, argsCount int) {
+	var funcName string
+
+	switch v := nameExpr.(type) {
+	case model.Ident:
+		funcName = v.Name
+	case string:
+		funcName = strings.Trim(v, "{}")
+		parts := strings.Fields(funcName)
+		if len(parts) > 0 {
+			funcName = parts[len(parts)-1]
+		}
+	}
+
+	if funcName != "" {
+		if idx, exists := a.symbolIndex[funcName]; exists {
+			sym := a.symbols[idx]
+			if sym.Type == "function" && argsCount != sym.ParamCount {
+				a.errors = append(a.errors, fmt.Sprintf("Неверное количество аргументов при вызове функции '%s': ожидается %d, передано %d", funcName, sym.ParamCount, argsCount))
+			}
 		}
 	}
 }
