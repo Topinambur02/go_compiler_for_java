@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/topinambur02/compiler/model"
@@ -14,6 +15,12 @@ type Symbol struct {
 	Declared    bool
 	Initialized bool
 	ParamCount  int
+	ReturnType  string
+}
+
+type Scope struct {
+	symbols map[string]*Symbol
+	outer   *Scope
 }
 
 type Triad struct {
@@ -23,41 +30,51 @@ type Triad struct {
 }
 
 type Analyzer struct {
-	symbols     []Symbol
+	scopes      *Scope
+	globalScope *Scope
 	triads      []Triad
 	errors      []string
-	symbolIndex map[string]int
+	currentFunc *Symbol
+	allScopes   []*Scope
 }
 
 func (c *Compiler) SemanticAnalysis(ast *model.Program) {
 	a := &Analyzer{
-		symbols:     []Symbol{},
-		triads:      []Triad{},
-		errors:      []string{},
-		symbolIndex: make(map[string]int),
+		triads: []Triad{},
+		errors: []string{},
+		// globalScope: newScope(nil),
 	}
+	a.globalScope = a.newScope(nil)
+	a.scopes = a.globalScope
 
 	for _, class := range ast.Classes {
 		for _, method := range class.Methods {
-			if _, exists := a.symbolIndex[method.Name]; exists {
+			if a.lookup(method.Name) != nil {
 				a.errors = append(a.errors, fmt.Sprintf("Повторное объявление функции: %s", method.Name))
-			} else {
-				a.symbolIndex[method.Name] = len(a.symbols)
-				a.symbols = append(a.symbols, Symbol{
-					Name:        method.Name,
-					Type:        "function",
-					Declared:    true,
-					Initialized: true,
-					ParamCount:  len(method.Params),
-				})
+				continue
 			}
+			sym := &Symbol{
+				Name:        method.Name,
+				Type:        "function",
+				Declared:    true,
+				Initialized: true,
+				ParamCount:  len(method.Params),
+				ReturnType:  method.ReturnType,
+			}
+			a.globalScope.symbols[method.Name] = sym
+
+			a.currentFunc = sym
+
+			a.pushScope()
 			for _, p := range method.Params {
 				a.addSymbol(p.Name, p.Type, true)
 			}
 			a.analyzeBlock(method.Body)
+			a.popScope()
+
+			a.currentFunc = nil
 		}
 	}
-
 	a.printResults()
 
 	if len(a.errors) > 0 {
@@ -66,24 +83,77 @@ func (c *Compiler) SemanticAnalysis(ast *model.Program) {
 	}
 }
 
-func (a *Analyzer) addSymbol(name, typeName string, init bool) {
-	if _, exists := a.symbolIndex[name]; exists {
-		a.errors = append(a.errors, fmt.Sprintf("Повторное объявление переменной: %s", name)) // [cite: 20]
-		return
+func (a *Analyzer) newScope(outer *Scope) *Scope {
+	s := &Scope{symbols: make(map[string]*Symbol), outer: outer}
+	a.allScopes = append(a.allScopes, s)
+	return s
+}
+
+func (a *Analyzer) pushScope() {
+	a.scopes = a.newScope(a.scopes)
+}
+
+func (a *Analyzer) popScope() {
+	if a.scopes != nil {
+		a.scopes = a.scopes.outer
 	}
-	a.symbolIndex[name] = len(a.symbols)
-	a.symbols = append(a.symbols, Symbol{
+}
+
+func (a *Analyzer) lookup(name string) *Symbol {
+	for scope := a.scopes; scope != nil; scope = scope.outer {
+		if sym, ok := scope.symbols[name]; ok {
+			return sym
+		}
+	}
+	return nil
+}
+
+func (a *Analyzer) getType(expr model.Expr) string {
+	switch e := expr.(type) {
+	case model.Literal:
+		if _, err := strconv.Atoi(e.Value); err == nil {
+			return "int"
+		}
+		if strings.HasPrefix(e.Value, `"`) {
+			return "String"
+		}
+		return "unknown"
+	case model.Ident:
+		if sym := a.lookup(e.Name); sym != nil {
+			return sym.Type
+		}
+		return "unknown"
+	case model.CallExpr:
+		if sym := a.globalScope.symbols[e.Name]; sym != nil && sym.Type == "function" {
+			return sym.ReturnType
+		}
+		return "unknown"
+	default:
+		return "unknown"
+	}
+}
+
+func (a *Analyzer) addSymbol(name, typeName string, init bool) *Symbol {
+	if a.lookup(name) != nil {
+		a.errors = append(a.errors, fmt.Sprintf("Повторное объявление переменной: %s", name))
+		return nil
+	}
+	sym := &Symbol{
 		Name:        name,
 		Type:        typeName,
 		Declared:    true,
 		Initialized: init,
-	})
+	}
+	a.scopes.symbols[name] = sym
+	return sym
 }
 
 func (a *Analyzer) analyzeBlock(block *model.Block) {
 	if block == nil {
 		return
 	}
+	a.pushScope()
+	defer a.popScope()
 	for _, stmt := range block.Statements {
 		a.analyzeStatement(stmt)
 	}
@@ -95,7 +165,7 @@ func (a *Analyzer) analyzeStatement(stmt model.Statement) {
 		valRef := a.analyzeExpr(s.Value)
 		a.addSymbol(s.Name, s.Type, s.Value != nil)
 		if s.Value != nil {
-			a.triads = append(a.triads, Triad{Op: ":=", Arg1: s.Name, Arg2: valRef}) // [cite: 15]
+			a.triads = append(a.triads, Triad{Op: ":=", Arg1: s.Name, Arg2: valRef})
 		}
 
 	case model.ForStmt:
@@ -113,14 +183,22 @@ func (a *Analyzer) analyzeStatement(stmt model.Statement) {
 		rightRef := a.analyzeExpr(s.Right)
 		a.triads = append(a.triads, Triad{Op: ":=", Arg1: leftRef, Arg2: rightRef})
 		if ident, ok := s.Left.(model.Ident); ok {
-			if idx, exists := a.symbolIndex[ident.Name]; exists {
-				a.symbols[idx].Initialized = true
+			if sym := a.lookup(ident.Name); sym != nil {
+				sym.Initialized = true
 			}
 		}
 
 	case model.ReturnStmt:
 		valRef := a.analyzeExpr(s.Value)
 		a.triads = append(a.triads, Triad{Op: "return", Arg1: valRef})
+		if a.currentFunc != nil {
+			retType := a.getType(s.Value)
+			if retType != "unknown" && retType != a.currentFunc.ReturnType && a.currentFunc.ReturnType != "void" {
+				a.errors = append(a.errors, fmt.Sprintf(
+					"Несоответствие типов: функция '%s' должна возвращать '%s', а возвращает '%s'",
+					a.currentFunc.Name, a.currentFunc.ReturnType, retType))
+			}
+		}
 
 	case model.CallExpr:
 		a.checkFunctionCall(s.Name, len(s.Args))
@@ -134,8 +212,8 @@ func (a *Analyzer) analyzeStatement(stmt model.Statement) {
 			rightRef := a.analyzeExpr(s.Right)
 			a.triads = append(a.triads, Triad{Op: ":=", Arg1: leftRef, Arg2: rightRef})
 			if ident, ok := s.Left.(model.Ident); ok {
-				if idx, exists := a.symbolIndex[ident.Name]; exists {
-					a.symbols[idx].Initialized = true
+				if sym := a.lookup(ident.Name); sym != nil {
+					sym.Initialized = true
 				}
 			}
 		} else {
@@ -143,7 +221,7 @@ func (a *Analyzer) analyzeStatement(stmt model.Statement) {
 		}
 
 	case model.Ident:
-		if _, exists := a.symbolIndex[s.Name]; !exists {
+		if sym := a.lookup(s.Name); sym != nil {
 			a.errors = append(a.errors, fmt.Sprintf("Использование необъявленной переменной: %s", s.Name))
 		}
 	default:
@@ -172,17 +250,14 @@ func (a *Analyzer) analyzeExpr(expr model.Expr) string {
 		return fmt.Sprintf("%s[]", arrName)
 
 	case model.Ident:
-		idx, exists := a.symbolIndex[e.Name]
-
-		if !exists {
+		sym := a.lookup(e.Name)
+		if sym == nil {
 			a.errors = append(a.errors, fmt.Sprintf("Использование необъявленной переменной: %s", e.Name))
 			return e.Name
 		}
-
-		if !a.symbols[idx].Initialized {
+		if !sym.Initialized {
 			a.errors = append(a.errors, fmt.Sprintf("Использование неинициализированной переменной: %s", e.Name))
 		}
-
 		return e.Name
 
 	case model.Literal:
@@ -216,8 +291,7 @@ func (a *Analyzer) analyzeExpr(expr model.Expr) string {
 func (a *Analyzer) analyzeLValue(expr model.Expr) string {
 	switch e := expr.(type) {
 	case model.Ident:
-		_, exists := a.symbolIndex[e.Name]
-		if !exists {
+		if sym := a.lookup(e.Name); sym == nil {
 			a.errors = append(a.errors, fmt.Sprintf("Использование необъявленной переменной: %s", e.Name))
 			return e.Name
 		}
@@ -227,6 +301,20 @@ func (a *Analyzer) analyzeLValue(expr model.Expr) string {
 	}
 }
 
+func (a *Analyzer) collectAllSymbols() []Symbol {
+	var result []Symbol
+
+	for _, sym := range a.globalScope.symbols {
+		result = append(result, *sym)
+	}
+
+	for _, s := range a.scopes.symbols {
+		result = append(result, *s)
+	}
+
+	return result
+}
+
 func (a *Analyzer) printResults() {
 	if len(a.errors) > 0 {
 		fmt.Println("Семантический анализ завершен с ошибками:")
@@ -234,10 +322,13 @@ func (a *Analyzer) printResults() {
 			fmt.Println("-", err)
 		}
 	} else {
-		fmt.Printf("%-10s | %-10s | %-10s | %-10s\n", "Name", "Type", "Declared", "Initialized")
-		fmt.Println("-----------+------------+------------+-------------")
-		for _, s := range a.symbols {
-			fmt.Printf("%-10s | %-10s | %-10v | %-10v\n", s.Name, s.Type, s.Declared, s.Initialized)
+		fmt.Printf("%-15s | %-10s | %-10s | %-10s\n", "Name", "Type", "Declared", "Init")
+		fmt.Println(strings.Repeat("-", 55))
+		for _, scope := range a.allScopes {
+			for _, sym := range scope.symbols {
+				fmt.Printf("%-15s | %-10s | %-10v | %-10v\n",
+					sym.Name, sym.Type, sym.Declared, sym.Initialized)
+			}
 		}
 		fmt.Println()
 
@@ -266,8 +357,7 @@ func (a *Analyzer) checkFunctionCall(nameExpr model.Expr, argsCount int) {
 	}
 
 	if funcName != "" {
-		if idx, exists := a.symbolIndex[funcName]; exists {
-			sym := a.symbols[idx]
+		if sym := a.lookup(funcName); sym != nil {
 			if sym.Type == "function" && argsCount != sym.ParamCount {
 				a.errors = append(a.errors, fmt.Sprintf("Неверное количество аргументов при вызове функции '%s': ожидается %d, передано %d", funcName, sym.ParamCount, argsCount))
 			}
